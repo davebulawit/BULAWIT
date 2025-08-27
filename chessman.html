@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Dama (Checkers) Game</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --sq:60px;
+    --light: #f3e7d7; /* light wood */
+    --dark: #8b5a2b; /* dark wood */
+    --red: #b82525;
+    --black: #1b1b1b;
+    --highlight: #ffff55aa;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: linear-gradient(180deg, #d2c1a5, #8b5a2b);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 20px;
+    user-select: none;
+  }
+  h1 {
+    margin-bottom: 0.2em;
+    color: #330b00;
+    text-shadow: 1px 1px 2px #fff9;
+  }
+  #board {
+    display: grid;
+    grid-template-columns: repeat(8, var(--sq));
+    grid-template-rows: repeat(8, var(--sq));
+    border-radius: 12px;
+    box-shadow: inset 0 0 20px #654321;
+    background: linear-gradient(180deg, var(--light) 0%, var(--dark) 100%);
+    border: 5px solid #5a3a10;
+  }
+  .square {
+    width: var(--sq);
+    height: var(--sq);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+  }
+  .square.light {
+    background: var(--light);
+  }
+  .square.dark {
+    background: var(--dark);
+  }
+  .square.highlight {
+    background: var(--highlight);
+  }
+  .piece {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    box-shadow: inset 2px 2px 7px rgba(255,255,255,0.7),
+                0 2px 4px rgba(0,0,0,0.6);
+    transition: transform 0.2s ease;
+  }
+  .piece.red {
+    background: radial-gradient(circle at center, #ff5555, #a30000);
+  }
+  .piece.black {
+    background: radial-gradient(circle at center, #222222, #000000);
+  }
+  .piece.king {
+    border: 3px solid gold;
+    box-shadow: 0 0 15px 3px gold, inset 2px 2px 6px #fff9;
+    position: relative;
+  }
+  .piece.king::after {
+    content: "♔";
+    position: absolute;
+    color: gold;
+    font-size: 24px;
+    font-weight: bold;
+    top: 8px;
+    left: 11px;
+    user-select: none;
+    pointer-events: none;
+  }
+  #info {
+    margin-top: 12px;
+    font-size: 18px;
+    font-weight: 600;
+    color: #330b00;
+  }
+  #buttons {
+    margin-top: 10px;
+  }
+  button {
+    margin: 0 6px;
+    padding: 8px 15px;
+    font-weight: 600;
+    border-radius: 10px;
+    border: none;
+    cursor: pointer;
+    background: #6d3a0b;
+    color: #f9e7b9;
+    box-shadow: 0 0 5px #5a3a10;
+    transition: background-color 0.3s ease;
+  }
+  button:hover {
+    background: #854d1b;
+  }
+  @media (max-width: 480px) {
+    :root {
+      --sq: 40px;
+    }
+    .piece {
+      width: 28px;
+      height: 28px;
+    }
+    .piece.king::after {
+      font-size: 16px;
+      top: 4px;
+      left: 7px;
+    }
+  }
+</style>
+</head>
+<body>
+  <h1>Dama (Checkers)</h1>
+  <div id="board" role="grid" aria-label="Checkers board"></div>
+  <div id="info" aria-live="polite">Red's turn</div>
+  <div id="buttons">
+    <button id="resetBtn">Reset Game</button>
+    <button id="undoBtn">Undo Move</button>
+  </div>
+
+<script>
+(() => {
+  const boardEl = document.getElementById('board');
+  const infoEl = document.getElementById('info');
+  const resetBtn = document.getElementById('resetBtn');
+  const undoBtn = document.getElementById('undoBtn');
+
+  const SIZE = 8;
+  // Squares are numbered [row][col] - 0-based, top-left is [0][0]
+
+  // Represent pieces as objects {player:'r'|'b', king:boolean}
+  // Empty squares: null
+
+  let board = [];
+  let turn = 'r'; // 'r' or 'b'
+  let selected = null; // {r,c}
+  let validMoves = [];
+  let moveChain = []; // for multi-jumps in single turn
+  let history = [];
+
+  function initBoard(){
+    board = [];
+    for(let r=0; r<SIZE; r++){
+      let row = [];
+      for(let c=0; c<SIZE; c++){
+        if((r+c)%2 === 1){
+          if(r < 3) row.push({player:'b', king:false});
+          else if(r > 4) row.push({player:'r', king:false});
+          else row.push(null);
+        } else {
+          row.push(null);
+        }
+      }
+      board.push(row);
+    }
+    turn = 'r';
+    selected = null;
+    validMoves = [];
+    moveChain = [];
+    history = [];
+    saveHistory();
+    updateInfo();
+    render();
+  }
+
+  // Save current board and turn for undo
+  function saveHistory(){
+    const snapshot = {
+      board: board.map(r => r.map(c => c ? {...c} : null)),
+      turn,
+    };
+    history.push(snapshot);
+    if(history.length > 100) history.shift();
+  }
+  function undo(){
+    if(history.length <= 1) return;
+    history.pop();
+    const prev = history[history.length - 1];
+    board = prev.board.map(r => r.map(c => c ? {...c} : null));
+    turn = prev.turn;
+    selected = null;
+    validMoves = [];
+    moveChain = [];
+    updateInfo();
+    render();
+  }
+
+  // Render board and pieces
+  function render(){
+    boardEl.innerHTML = '';
+    for(let r=0; r<SIZE; r++){
+      for(let c=0; c<SIZE; c++){
+        const sq = document.createElement('div');
+        sq.classList.add('square');
+        sq.classList.add( (r+c)%2 === 0 ? 'light' : 'dark');
+        sq.dataset.r = r;
+        sq.dataset.c = c;
+
+        // Highlight valid moves
+        if(selected && validMoves.some(m => m.to.r === r && m.to.c === c)){
+          sq.classList.add('highlight');
+        }
+        // Highlight selected square
+        if(selected && selected.r === r && selected.c === c){
+          sq.style.outline = '3px solid #fffa';
+        }
+
+        // Piece
+        const piece = board[r][c];
+        if(piece){
+          const pEl = document.createElement('div');
+          pEl.classList.add('piece');
+          pEl.classList.add(piece.player === 'r' ? 'red' : 'black');
+          if(piece.king) pEl.classList.add('king');
+          sq.appendChild(pEl);
+        }
+
+        sq.addEventListener('click', onSquareClick);
+        boardEl.appendChild(sq);
+      }
+    }
+  }
+
+  // Returns array of moves {from:{r,c}, to:{r,c}, capture: {r,c} or null }
+  function getAllMoves(player){
+    let moves = [];
+    let captures = [];
+    for(let r=0; r<SIZE; r++){
+      for(let c=0; c<SIZE; c++){
+        const piece = board[r][c];
+        if(piece && piece.player === player){
+          const ms = getValidMovesForPiece(r,c,piece,true);
+          captures.push(...ms.filter(m => m.capture));
+          moves.push(...ms);
+        }
+      }
+    }
+    // If captures available, must take them (forced capture rule)
+    if(captures.length > 0) return captures;
+    return moves;
+  }
+
+  // Get valid moves for piece at r,c
+  // If mustCaptureOnly true, only returns capturing moves
+  function getValidMovesForPiece(r,c,piece,mustCaptureOnly=false){
+    const directions = [];
+    if(piece.king){
+      // kings move diagonally both ways
+      directions.push([-1,-1],[-1,1],[1,-1],[1,1]);
+    } else if(piece.player === 'r'){
+      directions.push([-1,-1],[-1,1]); // forward (up)
+    } else {
+      directions.push([1,-1],[1,1]); // forward (down)
+    }
+
+    let moves = [];
+    // Check capture moves first
+    for(const [dr,dc] of directions){
+      let rr = r + dr;
+      let cc = c + dc;
+      let rr2 = r + 2*dr;
+      let cc2 = c + 2*dc;
+      if(inBounds(rr2,cc2) && board[rr][cc] && board[rr][cc].player !== piece.player && !board[rr2][cc2]){
+        moves.push({from:{r,c}, to:{r:rr2,c:cc2}, capture:{r:rr,c:cc}});
+      }
+    }
+    if(mustCaptureOnly && moves.length > 0) return moves;
+
+    if(moves.length === 0 && !mustCaptureOnly){
+      // no captures - check normal moves
+      for(const [dr,dc] of directions){
+        let rr = r + dr;
+        let cc = c + dc;
+        if(inBounds(rr,cc) && !board[rr][cc]){
+          moves.push({from:{r,c}, to:{r:rr,c:cc}, capture:null});
+        }
+      }
+    }
+    return moves;
+  }
+
+  function inBounds(r,c){
+    return r>=0 && r<SIZE && c>=0 && c<SIZE;
+  }
+
+  // Click handler for squares
+  function onSquareClick(e){
+    if(moveChain.length > 0){
+      // We are mid-multi-capture sequence
+      // Only allow selecting squares to jump next
+      const r = Number(e.currentTarget.dataset.r);
+      const c = Number(e.currentTarget.dataset.c);
+      const nextMove = validMoves.find(m => m.to.r === r && m.to.c === c);
+      if(nextMove){
+        applyMove(nextMove);
+      }
+      return;
+    }
+
+    const r = Number(e.currentTarget.dataset.r);
+    const c = Number(e.currentTarget.dataset.c);
+    const piece = board[r][c];
+    if(selected){
+      // Try move selected -> clicked
+      const move = validMoves.find(m => m.to.r === r && m.to.c === c);
+      if(move){
+        applyMove(move);
+        return;
+      }
+      // If clicked another piece of player, select it
+      if(piece && piece.player === turn){
+        selected = {r,c};
+        updateValidMoves();
+        render();
+        return;
+      }
+      // else deselect
+      selected = null;
+      validMoves = [];
+      render();
+    } else {
+      // no selected piece - select only if player piece
+      if(piece && piece.player === turn){
+        selected = {r,c};
+        updateValidMoves();
+        render();
+      }
+    }
+  }
+
+  function updateValidMoves(){
+    if(!selected) {
+      validMoves = [];
+      return;
+    }
+    const piece = board[selected.r][selected.c];
+    if(!piece) {
+      validMoves = [];
+      return;
+    }
+    // forced capture applies
+    const allCaptures = getAllMoves(turn).filter(m => m.capture);
+    if(allCaptures.length > 0){
+      validMoves = getValidMovesForPiece(selected.r, selected.c, piece, true);
+    } else {
+      validMoves = getValidMovesForPiece(selected.r, selected.c, piece, false);
+    }
+  }
+
+  // Apply a move, update board & turn
+  function applyMove(move){
+    const f = move.from, t = move.to;
+    const piece = board[f.r][f.c];
+    board[t.r][t.c] = piece;
+    board[f.r][f.c] = null;
+    // Remove captured piece
+    if(move.capture){
+      board[move.capture.r][move.capture.c] = null;
+    }
+    // Check for promotion (king)
+    if(piece.player === 'r' && t.r === 0) piece.king = true;
+    if(piece.player === 'b' && t.r === SIZE-1) piece.king = true;
+
+    // If was capture, check for multi-capture:
+    if(move.capture){
+      moveChain.push(move);
+      selected = {r:t.r, c:t.c};
+      updateValidMoves();
+      // Filter moves for same piece only
+      validMoves = validMoves.filter(m => m.from.r === t.r && m.from.c === t.c && m.capture);
+
+      if(validMoves.length > 0){
+        infoEl.textContent = `${turn === 'r' ? 'Red' : 'Black'}: Continue multi-capture`;
+        render();
+        return; // don't end turn yet
+      } else {
+        moveChain = [];
+      }
+    }
+
+    // End turn
+    selected = null;
+    validMoves = [];
+    turn = turn === 'r' ? 'b' : 'r';
+    updateInfo();
+    saveHistory();
+    render();
+    checkGameOver();
+  }
+
+  function updateInfo(){
+    infoEl.textContent = `${turn === 'r' ? 'Red' : 'Black'}'s turn`;
+  }
+
+  function checkGameOver(){
+    const moves = getAllMoves(turn);
+    if(moves.length === 0){
+      infoEl.textContent = `${turn === 'r' ? 'Red' : 'Black'} has no moves — ${turn === 'r' ? 'Black' : 'Red'} wins!`;
+      selected = null;
+      validMoves = [];
+    }
+  }
+
+  resetBtn.addEventListener('click', () => initBoard());
+  undoBtn.addEventListener('click', () => {
+    undo();
+  });
+
+  initBoard();
+})();
+</script>
+</body>
+</html>
